@@ -1,9 +1,9 @@
 import streamlit as st
+import pandas as pd
 import plotly.graph_objects as go
 
 from utils.extractor import extract_text_from_pdf
-from utils.preprocessor import clean_text
-from core.matcher import calculate_match_score
+from core.matcher import calculate_hybrid_score
 from core.rating import get_match_rating
 from core.skill_extractor import analyze_skill_gap
 from core.suggester import generate_suggestions
@@ -11,144 +11,184 @@ from core.ranker import rank_resumes
 
 
 # ================= PAGE CONFIG ================= #
-st.set_page_config(page_title="AI Resume Matcher", page_icon="🎯", layout="wide")
+st.set_page_config(
+    page_title="AI Resume Matcher",
+    page_icon="🎯",
+    layout="wide"
+)
+
+# ================= SIDEBAR ================= #
+with st.sidebar:
+    st.title("⚙️ Settings")
+
+    st.markdown("### 🤖 Model Info")
+    st.info("Hybrid Model: TF-IDF + BERT + Skill Matching")
+
+    st.markdown("---")
+    st.markdown("### 📌 Tips")
+    st.info("Best results come from detailed resumes and job descriptions.")
 
 
-# ================= GAUGE CHART ================= #
+# ================= GAUGE ================= #
 def draw_gauge(score):
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=score,
-        title={'text': "Match Score"},
+        title={'text': "Final Match Score"},
         gauge={
             'axis': {'range': [0, 100]},
-            'bar': {'color': "green" if score >= 75 else "orange" if score >= 50 else "red"},
+            'bar': {
+                'color': "green" if score >= 75 else "orange" if score >= 50 else "red"
+            },
         }
     ))
-    fig.update_layout(height=300)
+    fig.update_layout(height=250)
     return fig
 
 
-# ================= UI ================= #
-st.title("🎯 AI Resume vs Job Matcher")
-st.markdown("Compare resumes with a job description using AI (TF-IDF or BERT)")
+# ================= HEADER ================= #
+st.title("🎯 AI Resume Screening Dashboard")
+st.caption("AI-powered Resume vs Job Description Matcher with Explainability")
 
-# 🔥 MODEL SELECTION
-model_choice = st.radio(
-    "Select Matching Model:",
-    ["TF-IDF (Fast)", "BERT (Accurate)"]
-)
+st.divider()
 
-use_bert = model_choice == "BERT (Accurate)"
-
+# ================= INPUT ================= #
 col1, col2 = st.columns(2)
 
 with col1:
     uploaded_files = st.file_uploader(
-        "Upload Resumes (Multiple PDFs)",
+        "📄 Upload Resumes (PDF)",
         type=["pdf"],
         accept_multiple_files=True
     )
 
 with col2:
-    jd_text = st.text_area("Paste Job Description", height=200)
+    jd_text = st.text_area("📝 Paste Job Description", height=200)
 
 
-# ================= BUTTON ================= #
-if st.button("Analyze Match"):
+# ================= ANALYZE ================= #
+if st.button("🚀 Analyze Resumes"):
 
     if not uploaded_files or not jd_text.strip():
-        st.warning("Please upload resumes and enter job description")
-    else:
-        with st.spinner("Analyzing resumes... (BERT may take time)"):
+        st.warning("⚠️ Please upload resumes and enter job description")
+        st.stop()
 
-            results = rank_resumes(uploaded_files, jd_text, use_bert)
+    with st.spinner("🔍 Analyzing resumes..."):
 
-            if not results:
-                st.error("No valid resumes processed")
-            else:
-                st.divider()
-                st.header("🏆 Resume Ranking")
+        results = rank_resumes(uploaded_files, jd_text)
 
-                # 🥇 Top Candidate
-                top = results[0]
-                st.success(f"Top Candidate: {top['name']} ({top['score']}%)")
+    if not results:
+        st.error("❌ No valid resumes processed")
+        st.stop()
 
-                # 📊 Ranking List
-                for i, res in enumerate(results, start=1):
-                    if i == 1:
-                        st.success(f"🥇 {res['name']} → {res['score']}%")
-                    elif i == 2:
-                        st.info(f"🥈 {res['name']} → {res['score']}%")
-                    elif i == 3:
-                        st.warning(f"🥉 {res['name']} → {res['score']}%")
-                    else:
-                        st.write(f"{i}. {res['name']} → {res['score']}%")
+    # ================= RANKING ================= #
+    st.divider()
+    st.header("🏆 Resume Ranking")
 
-                st.divider()
-                st.header("📄 Detailed Analysis (Top Resume)")
+    df = pd.DataFrame(results)
 
-                # ================= TOP RESUME ANALYSIS ================= #
-                top_file = None
-                for file in uploaded_files:
-                    if file.name == top["name"]:
-                        top_file = file
-                        break
+    # 🥇 Top Candidate
+    top = results[0]
+    st.success(f"Top Candidate: **{top['name']}** ({top['score']}%)")
 
-                if top_file:
-                    raw_resume = extract_text_from_pdf(top_file)
+    # 📊 Table
+    st.dataframe(df, use_container_width=True)
 
-                    if raw_resume:
-                        clean_resume = clean_text(raw_resume)
-                        clean_jd = clean_text(jd_text)
+    # 📥 Download
+    csv = df.to_csv(index=False).encode('utf-8')
+    st.download_button("📥 Download Results", csv, "results.csv", "text/csv")
 
-                        # Score
-                        score = calculate_match_score(clean_resume, clean_jd, use_bert=use_bert)
+    # ================= TOP ANALYSIS ================= #
+    st.divider()
+    st.header("📄 Detailed Analysis (Top Resume)")
 
-                        # Rating
-                        rating = get_match_rating(score)
+    top_file = next((f for f in uploaded_files if f.name == top["name"]), None)
 
-                        # Skills
-                        matched, missing, jd_skills = analyze_skill_gap(clean_resume, clean_jd)
+    if top_file:
+        raw_resume = extract_text_from_pdf(top_file)
 
-                        # Suggestions
-                        suggestions = generate_suggestions(score, missing)
+        if raw_resume:
 
-                        colA, colB = st.columns([1, 2])
+            # 🔥 HYBRID MATCHING
+            result = calculate_hybrid_score(raw_resume, jd_text)
 
-                        with colA:
-                            st.plotly_chart(draw_gauge(score), use_container_width=True)
-                            st.caption(f"Model Used: {'BERT 🤖' if use_bert else 'TF-IDF ⚡'}")
+            score = result["final_score"]
+            tfidf_score = result["tfidf"]
+            bert_score = result["bert"]
+            skill_score = result["skill"]
+            keywords = result["keywords"]
 
-                        with colB:
-                            st.subheader("🏆 Rating")
+            # 🔹 Rating
+            rating = get_match_rating(score)
 
-                            if score >= 80:
-                                st.success(f"{rating}")
-                            elif score >= 60:
-                                st.info(f"{rating}")
-                            elif score >= 40:
-                                st.warning(f"{rating}")
-                            else:
-                                st.error(f"{rating}")
+            # 🔹 Skill Gap
+            matched, missing, jd_skills = analyze_skill_gap(raw_resume, jd_text)
 
-                            st.subheader("💡 Suggestions")
-                            for s in suggestions:
-                                st.info(s)
+            # 🔹 Suggestions
+            suggestions = generate_suggestions(score, missing)
 
-                        # ================= SKILLS ================= #
-                        st.subheader("🛠 Skill Analysis")
+            colA, colB = st.columns([1, 2])
 
-                        tab1, tab2 = st.tabs(["Matched Skills", "Missing Skills"])
+            # ================= GAUGE ================= #
+            with colA:
+                st.plotly_chart(draw_gauge(score), use_container_width=True)
+                st.caption("Hybrid Model 🤖")
 
-                        with tab1:
-                            if matched:
-                                st.success(", ".join(matched))
-                            else:
-                                st.write("No matched skills found")
+            # ================= TEXT ================= #
+            with colB:
+                st.subheader("🏆 Rating")
 
-                        with tab2:
-                            if missing:
-                                st.error(", ".join(missing))
-                            else:
-                                st.success("No missing skills 🎉")
+                if score >= 80:
+                    st.success(rating)
+                elif score >= 60:
+                    st.info(rating)
+                elif score >= 40:
+                    st.warning(rating)
+                else:
+                    st.error(rating)
+
+                st.subheader("💡 Suggestions")
+                for s in suggestions:
+                    st.write(f"• {s}")
+
+            # ================= SCORE BREAKDOWN ================= #
+            st.subheader("📊 Score Breakdown")
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("TF-IDF", f"{tfidf_score}%")
+            c2.metric("BERT", f"{bert_score}%")
+            c3.metric("Skill Match", f"{skill_score}%")
+
+            # ================= KEYWORDS ================= #
+            if keywords:
+                st.subheader("🔍 Top Matching Keywords")
+                st.success(", ".join(keywords))
+
+            # ================= SKILLS ================= #
+            st.subheader("🛠 Skill Analysis")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("### ✅ Matched Skills")
+                if matched:
+                    st.success(", ".join(matched))
+                else:
+                    st.write("No matched skills")
+
+            with col2:
+                st.markdown("### ❌ Missing Skills")
+                if missing:
+                    st.error(", ".join(missing))
+                else:
+                    st.success("No missing skills 🎉")
+
+            # ================= SKILL CHART ================= #
+            st.subheader("📊 Skill Distribution")
+
+            skill_data = {
+                "Matched": len(matched),
+                "Missing": len(missing)
+            }
+
+            st.bar_chart(skill_data)
