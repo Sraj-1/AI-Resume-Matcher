@@ -144,7 +144,7 @@ def calculate_hybrid_score(resume_text: str, jd_text: str) -> Dict:
     tfidf_score, keywords = tfidf_match(clean_resume, clean_jd)
 
     # ===== BERT ===== #
-    bert_score = bert_match(clean_resume, clean_jd)
+    bert_score = 0.0
 
     # ===== SKILLS ===== #
     resume_skills = extract_skills(clean_resume)
@@ -157,9 +157,8 @@ def calculate_hybrid_score(resume_text: str, jd_text: str) -> Dict:
 
     # ===== FINAL SCORE ===== #
     final_score = (
-        0.5 * tfidf_score +
-        0.3 * bert_score +
-        0.2 * skill_score
+        0.7 * tfidf_score +
+        0.3 * skill_score
     )
 
     return {

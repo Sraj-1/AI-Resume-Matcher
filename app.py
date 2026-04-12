@@ -22,7 +22,7 @@ with st.sidebar:
     st.title("⚙️ Settings")
 
     st.markdown("### 🤖 Model Info")
-    st.info("Hybrid Model: TF-IDF + BERT + Skill Matching")
+    st.info("Hybrid Model: TF-IDF + Skill Matching")
 
     st.markdown("---")
     st.markdown("### 📌 Tips")
